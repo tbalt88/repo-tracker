@@ -1,0 +1,44 @@
+name: 🔄 Repo Tracker Sync
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # Daily at 06:00 UTC — edit to taste
+  workflow_dispatch:       # Manual trigger from the Actions tab
+
+permissions:
+  contents: write          # Needed to commit repo-index.json and README.md back
+
+jobs:
+  sync:
+    name: Sync Repo Index & Profile
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️ Checkout repo-tracker
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 🔍 Run sync script
+        env:
+          GITHUB_TOKEN: ${{ secrets.TRACKER_PAT }}
+          GITHUB_USERNAME: ${{ secrets.TRACKER_USERNAME }}
+        run: node scripts/sync.js
+
+      - name: 📝 Commit changes back to repo-tracker
+        run: |
+          git config user.name  "repo-tracker[bot]"
+          git config user.email "repo-tracker[bot]@users.noreply.github.com"
+          git add repo-index.json README.md profile-readme/README.md
+          if git diff --staged --quiet; then
+            echo "✅ No changes to commit."
+          else
+            git commit -m "chore: sync repo index — $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+            echo "✅ Changes committed and pushed."
+          fi
