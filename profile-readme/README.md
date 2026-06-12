@@ -1,4 +1,4 @@
-<!-- Auto-updated: Fri, 12 Jun 2026 20:30:11 GMT -->
+<!-- Auto-updated: Fri, 12 Jun 2026 20:36:25 GMT -->
 
 ## 📊 GitHub Dashboard
 
@@ -22,7 +22,7 @@
 | [**career-ops**](https://github.com/tbalt88/career-ops) | I spent months applying to jobs the hard way. So I engineered the… | ⭐ 0 | JavaScript |
 | [**aiallinonesandbox**](https://github.com/tbalt88/aiallinonesandbox) | 🌐 Browser 🤖 MCP 🌐 Website&nbsp&nbsp &nbsp&nbsp🔌 API&nbsp&nbsp… | ⭐ 0 | — |
 | [**matts-build-2026-list**](https://github.com/tbalt88/matts-build-2026-list) | This is a personal collection of announcements and updates at aro… | ⭐ 0 | — |
-| [**hyperframes**](https://github.com/tbalt88/hyperframes) | <img src=" | ⭐ 0 | — |
+| [**hyperframes**](https://github.com/tbalt88/hyperframes) |  | ⭐ 0 | — |
 
 > 📋 [See full repo index →](https://github.com/tbalt88/repo-tracker)
 
