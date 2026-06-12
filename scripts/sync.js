@@ -91,7 +91,11 @@ async function fetchAllRepos() {
 async function fetchUpstreamAbout(parentFullName) {
   try {
     const { status, data } = await ghGet(`/repos/${parentFullName}`);
-    if (status !== 200) return null;
+    console.log(`    [upstream-about] ${parentFullName} → HTTP ${status} | stars=${data?.stargazers_count ?? "n/a"} | desc="${data?.description ?? "none"}"`);
+    if (status !== 200) {
+      console.warn(`    [upstream-about] ⚠️ Non-200 response for ${parentFullName}: ${JSON.stringify(data).slice(0, 120)}`);
+      return null;
+    }
     return {
       full_name:   data.full_name,
       url:         data.html_url,
@@ -106,7 +110,8 @@ async function fetchUpstreamAbout(parentFullName) {
       open_issues: data.open_issues_count,
       archived:    data.archived,
     };
-  } catch {
+  } catch (err) {
+    console.error(`    [upstream-about] ❌ Exception for ${parentFullName}:`, err.message);
     return null;
   }
 }
