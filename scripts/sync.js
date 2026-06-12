@@ -312,6 +312,19 @@ async function pushProfileReadme(dashboardBlock) {
   return { status };
 }
 
+// ─── Strip markdown/HTML from a string (for display in tables) ───────────────
+
+function stripMarkdown(str) {
+  if (!str) return "";
+  return str
+    .replace(/<[^>]+>/g, "")          // HTML tags
+    .replace(/!\[.*?\]\(.*?\)/g, "")  // images
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // links → text
+    .replace(/[`*_~]/g, "")           // markdown formatting
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // ─── Render tracker README.md ─────────────────────────────────────────────────
 
 function renderTrackerReadme(entries, username) {
@@ -335,7 +348,10 @@ function renderTrackerReadme(entries, username) {
         syncBadge,
       ].filter(Boolean).join(" ");
       const topics = e.topics.length ? e.topics.map((t) => `\`${t}\``).join(" ") : "—";
-      return `| [${e.name}](${e.url}) | ⭐ ${e.stars} | ${e.language || "—"} | ${topics} | ${flags || "✅"} |`;
+      const displayStars = e.fork && e.upstream?.about?.stars != null
+        ? `${e.stars} (↑ ${e.upstream.about.stars.toLocaleString()} upstream)`
+        : e.stars;
+      return `| [${e.name}](${e.url}) | ⭐ ${displayStars} | ${e.language || "—"} | ${topics} | ${flags || "✅"} |`;
     })
     .join("\n");
 
@@ -390,7 +406,7 @@ ${syncLine}`;
 
       return `### [${e.name}](${e.url})${e.fork ? " _(fork)_" : ""}
 
-**📝 Your repo:** ${e.summary}
+**📝 Your repo:** ${stripMarkdown(e.summary)}
 ${upstreamBlock}
 - **Stars:** ⭐ ${e.stars} &nbsp;|&nbsp; **Forks:** 🍴 ${e.forks} &nbsp;|&nbsp; **Language:** ${e.language || "N/A"}
 - **Topics:** ${e.topics.length ? e.topics.join(", ") : "None"}
@@ -452,7 +468,18 @@ function renderProfileReadme(entries, username) {
     .slice(0, 5);
 
   const topRepoCards = topRepos
-    .map((e) => `| [**${e.name}**](${e.url}) | ${e.summary.slice(0, 60)}${e.summary.length > 60 ? "…" : ""} | ⭐ ${e.stars} | ${e.language || "—"} |`)
+    .map((e) => {
+      // For forks: show upstream description + upstream stars
+      const desc    = e.fork && e.upstream?.about?.description
+                        ? e.upstream.about.description
+                        : stripMarkdown(e.summary);
+      const stars   = e.fork && e.upstream?.about?.stars != null
+                        ? e.upstream.about.stars.toLocaleString() + " ↑"
+                        : e.stars;
+      const lang    = (e.fork && e.upstream?.about?.language) || e.language || "—";
+      const display = desc.slice(0, 65) + (desc.length > 65 ? "…" : "");
+      return `| [**${e.name}**](${e.url}) | ${display} | ⭐ ${stars} | ${lang} |`;
+    })
     .join("\n");
 
   const langBar = topLanguages.map(([lang, count]) => `\`${lang}\` ×${count}`).join("  ");
