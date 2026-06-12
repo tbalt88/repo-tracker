@@ -144,31 +144,60 @@ async function fetchAllRepos() {
   return all;
 }
 
-// ─── Fetch README and extract a short summary ─────────────────────────────────
+// ─── Fetch README and build a rich summary ───────────────────────────────────
+//
+// For forks: also fetches the upstream (parent) repo README so you can
+// evaluate the source, not just your fork snapshot.
+// Returns an object: { own, upstream } — both are plain text summaries.
 
-async function fetchSummary(owner, repo, description) {
-  if (description && description.trim().length > 20) return description.trim();
+function extractTextFromReadme(raw) {
+  // Strip markdown noise and extract meaningful paragraphs
+  const cleaned = raw
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/!\[.*?\]\(.*?\)/g, "")          // images
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")  // links → text
+    .replace(/^#{1,6}\s+.+$/gm, "")              // headings
+    .replace(/```[\s\S]*?```/g, "")              // code blocks
+    .replace(/`[^`]+`/g, "")                      // inline code
+    .replace(/^\s*[-*>|]+\s*/gm, "")             // bullets/blockquotes/tables
+    .replace(/\|.+\|/g, "")                      // table rows
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 
+  // Collect up to 3 meaningful paragraphs for a richer summary
+  const paragraphs = cleaned
+    .split(/\n\n+/)
+    .map((p) => p.replace(/\n/g, " ").trim())
+    .filter((p) => p.length > 40);
+
+  return paragraphs.slice(0, 3).join(" ").slice(0, 500) || null;
+}
+
+async function fetchReadmeSummary(owner, repo) {
   try {
     const { status, data } = await ghGet(`/repos/${owner}/${repo}/readme`);
-    if (status !== 200 || !data.content) return description || "No description available.";
-
+    if (status !== 200 || !data.content) return null;
     const raw = Buffer.from(data.content, "base64").toString("utf8");
-    const cleaned = raw
-      .replace(/<!--[\s\S]*?-->/g, "")
-      .replace(/!\[.*?\]\(.*?\)/g, "")
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-      .replace(/^#{1,6}\s+.+$/gm, "")
-      .replace(/`{1,3}[^`]*`{1,3}/g, "")
-      .replace(/^\s*[-*>|]+\s*/gm, "")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-
-    const para = cleaned.split(/\n\n+/).find((p) => p.trim().length > 30) || "";
-    return para.replace(/\n/g, " ").slice(0, 280) || description || "No description available.";
+    return extractTextFromReadme(raw);
   } catch {
-    return description || "No description available.";
+    return null;
   }
+}
+
+async function fetchSummary(owner, repo, description, parentFullName) {
+  // Always try to get a README-based summary (richer than description alone)
+  const readmeSummary = await fetchReadmeSummary(owner, repo);
+  const ownSummary    = readmeSummary || description?.trim() || "No description available.";
+
+  // For forks: also fetch the upstream README so we can evaluate the source
+  let upstreamSummary = null;
+  if (parentFullName) {
+    const [parentOwner, parentRepo] = parentFullName.split("/");
+    const upstreamReadme = await fetchReadmeSummary(parentOwner, parentRepo);
+    upstreamSummary = upstreamReadme || null;
+  }
+
+  return { own: ownSummary, upstream: upstreamSummary };
 }
 
 // ─── Check if a fork is behind its upstream ───────────────────────────────────
@@ -205,29 +234,31 @@ async function checkUpstreamDrift(owner, repo, parentFullName) {
 // ─── Build entry per repo ─────────────────────────────────────────────────────
 
 async function buildEntry(repo) {
-  const owner = repo.owner.login;
-  const name  = repo.name;
-  console.log(`  ↳ ${owner}/${name}`);
+  const owner      = repo.owner.login;
+  const name       = repo.name;
+  const parentName = repo.fork && repo.parent ? repo.parent.full_name : null;
+  console.log(`  ↳ ${owner}/${name}${parentName ? ` (fork of ${parentName})` : ""}`);
 
-  const summary      = await fetchSummary(owner, name, repo.description);
+  const summary      = await fetchSummary(owner, name, repo.description, parentName);
   const upstreamInfo = repo.fork && repo.parent
     ? await checkUpstreamDrift(owner, name, repo.parent.full_name)
     : {};
 
   return {
     name,
-    full_name:   repo.full_name,
-    url:         repo.html_url,
-    stars:       repo.stargazers_count,
-    forks:       repo.forks_count,
-    language:    repo.language || null,
-    topics:      repo.topics || [],
-    private:     repo.private,
-    archived:    repo.archived,
-    fork:        repo.fork,
-    summary,
-    last_pushed: repo.pushed_at,
-    last_synced: new Date().toISOString(),
+    full_name:        repo.full_name,
+    url:              repo.html_url,
+    stars:            repo.stargazers_count,
+    forks:            repo.forks_count,
+    language:         repo.language || null,
+    topics:           repo.topics || [],
+    private:          repo.private,
+    archived:         repo.archived,
+    fork:             repo.fork,
+    summary:          summary.own,
+    upstream_summary: summary.upstream,
+    last_pushed:      repo.pushed_at,
+    last_synced:      new Date().toISOString(),
     upstream:    repo.fork
       ? { parent: repo.parent?.full_name || null, ...upstreamInfo }
       : null,
@@ -263,13 +294,20 @@ function renderTrackerReadme(entries, username) {
 
   const summaries = [...entries]
     .sort((a, b) => b.stars - a.stars)
-    .map((e) => `### [${e.name}](${e.url})
-${e.summary}
+    .map((e) => {
+      const upstreamBlock = e.fork && e.upstream
+        ? `\n**🔍 Upstream source** (\`${e.upstream.upstreamRepo || e.upstream.parent}\`):\n${e.upstream_summary || "_No upstream README found._"}\n${e.upstream?.drifted ? `\n> ⚠️ **Your fork is behind upstream** — last upstream commit: ${e.upstream.upstreamLatestCommit || "unknown"}` : "\n> ✅ Fork is up to date with upstream"}`
+        : "";
+
+      return `### [${e.name}](${e.url})${e.fork ? " _(fork)_" : ""}
+
+**📝 Your repo:** ${e.summary}
+${upstreamBlock}
 
 - **Stars:** ⭐ ${e.stars} &nbsp;|&nbsp; **Forks:** 🍴 ${e.forks} &nbsp;|&nbsp; **Language:** ${e.language || "N/A"}
 - **Topics:** ${e.topics.length ? e.topics.join(", ") : "None"}
-- **Last pushed:** ${e.last_pushed ? new Date(e.last_pushed).toDateString() : "N/A"}
-${e.upstream?.drifted ? `- ⚠️ **Upstream drift detected** from \`${e.upstream.upstreamRepo}\` (last upstream commit: ${e.upstream.upstreamLatestCommit || "unknown"})` : ""}`)
+- **Last pushed:** ${e.last_pushed ? new Date(e.last_pushed).toDateString() : "N/A"}`;
+    })
     .join("\n\n---\n\n");
 
   return `# 📦 Repo Index — @${username}
