@@ -205,11 +205,19 @@ async function rebaseFork(owner, repo, defaultBranch) {
 
 // ─── Build entry per repo ─────────────────────────────────────────────────────
 
-async function buildEntry(repo) {
-  const owner      = repo.owner.login;
-  const name       = repo.name;
-  const parentName = repo.fork && repo.parent ? repo.parent.full_name : null;
+async function buildEntry(repoSummary) {
+  const owner = repoSummary.owner.login;
+  const name  = repoSummary.name;
 
+  // The list API returns fork=true but omits the parent object.
+  // Fetch the full repo details for forks so we get the parent field.
+  let repo = repoSummary;
+  if (repoSummary.fork && !repoSummary.parent) {
+    const { status, data } = await ghGet(`/repos/${owner}/${name}`);
+    if (status === 200 && data.parent) repo = data;
+  }
+
+  const parentName = repo.fork && repo.parent ? repo.parent.full_name : null;
   console.log(`  ↳ ${owner}/${name}${parentName ? ` (fork of ${parentName})` : ""}`);
 
   // Own README summary
