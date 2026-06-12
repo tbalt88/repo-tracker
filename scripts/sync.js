@@ -317,11 +317,17 @@ async function pushProfileReadme(dashboardBlock) {
 function stripMarkdown(str) {
   if (!str) return "";
   return str
-    .replace(/<[^>]+>/g, "")          // HTML tags
-    .replace(/!\[.*?\]\(.*?\)/g, "")  // images
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // links → text
-    .replace(/[`*_~]/g, "")           // markdown formatting
-    .replace(/\s+/g, " ")
+    .replace(/<img[^>]*>?/gi, "")                  // img tags (including unclosed)
+    .replace(/<[^>]+>/g, "")                        // all other HTML tags
+    .replace(/&nbsp;/gi, " ")                       // non-breaking space
+    .replace(/&amp;/gi, "&")                        // ampersand — decode last
+    .replace(/&lt;/gi, "")                          // drop encoded angle brackets
+    .replace(/&gt;/gi, "")                          // drop encoded angle brackets
+    .replace(/&#?[a-z0-9]+;/gi, "")                // any remaining HTML entities
+    .replace(/!\[.*?\]\(.*?\)/g, "")                // markdown images
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")        // markdown links → text
+    .replace(/[`*_~#]/g, "")                        // markdown formatting
+    .replace(/\s{2,}/g, " ")                        // collapse spaces
     .trim();
 }
 
