@@ -33,7 +33,10 @@ if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
 
-function ghRequest(method, urlPath, bodyObj) {
+const MAX_RETRIES = 4;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function rawRequest(method, urlPath, bodyObj) {
   return new Promise((resolve, reject) => {
     const body = bodyObj ? JSON.stringify(bodyObj) : null;
     const options = {
@@ -53,14 +56,56 @@ function ghRequest(method, urlPath, bodyObj) {
       let b = "";
       res.on("data", (chunk) => (b += chunk));
       res.on("end", () => {
-        try { resolve({ status: res.statusCode, data: JSON.parse(b) }); }
-        catch { resolve({ status: res.statusCode, data: b }); }
+        let data;
+        try { data = JSON.parse(b); } catch { data = b; }
+        resolve({ status: res.statusCode, data, headers: res.headers });
       });
     });
     req.on("error", reject);
     if (body) req.write(body);
     req.end();
   });
+}
+
+// Wraps rawRequest with retry/backoff for GitHub's primary and secondary rate
+// limits. GitHub signals these with 403/429 plus either a `retry-after` header
+// (seconds) or `x-ratelimit-remaining: 0` + `x-ratelimit-reset` (epoch seconds).
+// We honour whichever is present, fall back to exponential backoff, and give up
+// after MAX_RETRIES so a stuck limit can't hang the run indefinitely.
+async function ghRequest(method, urlPath, bodyObj) {
+  for (let attempt = 0; ; attempt++) {
+    let res;
+    try {
+      res = await rawRequest(method, urlPath, bodyObj);
+    } catch (err) {
+      if (attempt >= MAX_RETRIES) throw err;
+      const backoff = 1000 * 2 ** attempt;
+      console.warn(`    [rate-limit] network error on ${urlPath} — retrying in ${backoff}ms (${err.message})`);
+      await sleep(backoff);
+      continue;
+    }
+
+    const remaining = res.headers?.["x-ratelimit-remaining"];
+    const isRateLimited =
+      (res.status === 403 || res.status === 429) &&
+      (res.headers?.["retry-after"] != null || remaining === "0");
+
+    if (!isRateLimited || attempt >= MAX_RETRIES) return res;
+
+    let waitMs;
+    if (res.headers["retry-after"] != null) {
+      waitMs = (parseInt(res.headers["retry-after"], 10) || 1) * 1000;
+    } else {
+      const resetEpoch = parseInt(res.headers["x-ratelimit-reset"], 10);
+      waitMs = Number.isFinite(resetEpoch)
+        ? Math.max(0, resetEpoch * 1000 - Date.now()) + 1000
+        : 1000 * 2 ** attempt;
+    }
+    // Cap any single wait so a far-off reset can't stall the job for an hour.
+    waitMs = Math.min(waitMs, 60000);
+    console.warn(`    [rate-limit] ${res.status} on ${urlPath} — waiting ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${MAX_RETRIES})`);
+    await sleep(waitMs);
+  }
 }
 
 const ghGet  = (p)    => ghRequest("GET",  p, null);
@@ -270,7 +315,7 @@ async function buildEntry(repoSummary) {
       // sync result — only present for drifted forks
       ...(upstreamInfo.drifted ? {
         sync_status:    syncResult.sync_status    || null,
-        sync_message:   syncResult.sync_message   || null,
+        sync_message:   syncResult.message        || null,
         synced:         syncResult.synced         || false,
       } : {}),
     } : null,
